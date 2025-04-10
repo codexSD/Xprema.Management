@@ -1,38 +1,70 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Xprema.Framework.Core;
+using Xprema.Framework.Entities;
 using Xprema.Framework.Entities.MultiTenancy;
+using Xprema.Framework.Identity;
+using Xprema.Framework.tests;
+using Xunit;
 
-namespace Xprema.Framework.Tests;
+namespace Xprema.Framework.tests;
 
 public class TenantContextAccessorTests : TestBase
 {
+    private readonly TenantContextAccessor<TestDbContext> _tenantContextAccessor;
+    private readonly Guid _tenantId;
+
+    public TenantContextAccessorTests()
+    {
+        _tenantContextAccessor = ServiceProvider.GetRequiredService<TenantContextAccessor<TestDbContext>>();
+        _tenantId = Guid.NewGuid();
+    }
+
     [Fact]
     public void GetCurrentTenantId_ShouldReturnEmptyGuidWhenNoTenantIsSet()
     {
         // Act
-        var tenantId = TenantContextAccessor.GetCurrentTenantId();
+        var tenantId = _tenantContextAccessor.GetCurrentTenantId();
         
         // Assert
         Assert.Equal(Guid.Empty, tenantId);
     }
     
     [Fact]
-    public void SetCurrentTenantId_ShouldSetTenantId()
+    public async Task SetCurrentTenantId_ShouldSetTenantId()
     {
         // Arrange
-        var tenantId = Guid.NewGuid();
-        
+        var tenantContextAccessor = ServiceProvider.GetRequiredService<TenantContextAccessor<TestDbContext>>();
+
         // Act
-        TenantContextAccessor.SetCurrentTenantId(tenantId);
-        var currentTenantId = TenantContextAccessor.GetCurrentTenantId();
-        
+        tenantContextAccessor.SetCurrentTenantId(_tenantId);
+
         // Assert
-        Assert.Equal(tenantId, currentTenantId);
+        Assert.Equal(_tenantId, tenantContextAccessor.GetCurrentTenantId());
+    }
+    
+    [Fact]
+    public async Task GetCurrentTenantId_ShouldReturnSetTenantId()
+    {
+        // Arrange
+        var tenantContextAccessor = ServiceProvider.GetRequiredService<TenantContextAccessor<TestDbContext>>();
+        tenantContextAccessor.SetCurrentTenantId(_tenantId);
+
+        // Act
+        var currentTenantId = tenantContextAccessor.GetCurrentTenantId();
+
+        // Assert
+        Assert.Equal(_tenantId, currentTenantId);
     }
     
     [Fact]
     public async Task GetCurrentTenantAsync_ShouldReturnNullWhenNoTenantIsSet()
     {
         // Act
-        var tenant = await TenantContextAccessor.GetCurrentTenantAsync();
+        var tenant = await _tenantContextAccessor.GetCurrentTenantAsync();
         
         // Assert
         Assert.Null(tenant);
@@ -45,17 +77,17 @@ public class TenantContextAccessorTests : TestBase
         var createdTenant = await CreateTestTenantAsync();
         
         // Make sure the tenant is in the database
-        await DbContext.SaveChangesAsync();
+        await _dbContext.SaveChangesAsync();
         
         // Verify the tenant can be found directly from the DbContext
-        var directlyFoundTenant = await DbContext.Tenants.FindAsync(createdTenant.Id);
+        var directlyFoundTenant = await _dbContext.Tenants.FindAsync(createdTenant.Id);
         Assert.NotNull(directlyFoundTenant);
         
         // Set current tenant ID
-        TenantContextAccessor.SetCurrentTenantId(createdTenant.Id);
+        _tenantContextAccessor.SetCurrentTenantId(createdTenant.Id);
         
         // Act - Now use the TenantContextAccessor to get the tenant
-        var tenant = await TenantContextAccessor.GetCurrentTenantAsync();
+        var tenant = await _tenantContextAccessor.GetCurrentTenantAsync();
         
         // Assert
         Assert.NotNull(tenant);
@@ -77,18 +109,18 @@ public class TenantContextAccessorTests : TestBase
         // Act
         var thread1 = new Thread(() =>
         {
-            TenantContextAccessor.SetCurrentTenantId(tenantId1);
+            _tenantContextAccessor.SetCurrentTenantId(tenantId1);
             manualResetEvent1.Set(); // Signal thread1 has set the tenant ID
             manualResetEvent2.Wait(); // Wait for thread2 to set its tenant ID
-            thread1TenantId = TenantContextAccessor.GetCurrentTenantId();
+            thread1TenantId = _tenantContextAccessor.GetCurrentTenantId();
         });
         
         var thread2 = new Thread(() =>
         {
             manualResetEvent1.Wait(); // Wait for thread1 to set its tenant ID
-            TenantContextAccessor.SetCurrentTenantId(tenantId2);
-            manualResetEvent2.Set(); // Signal thread2 has set the tenant ID
-            thread2TenantId = TenantContextAccessor.GetCurrentTenantId();
+            _tenantContextAccessor.SetCurrentTenantId(tenantId2);
+            manualResetEvent2.Set(); // Signal thread2 has set its tenant ID
+            thread2TenantId = _tenantContextAccessor.GetCurrentTenantId();
         });
         
         thread1.Start();
@@ -101,5 +133,19 @@ public class TenantContextAccessorTests : TestBase
         Assert.Equal(tenantId1, thread1TenantId);
         Assert.Equal(tenantId2, thread2TenantId);
         Assert.NotEqual(thread1TenantId, thread2TenantId);
+    }
+
+    [Fact]
+    public async Task ClearCurrentTenantId_ShouldClearTenantId()
+    {
+        // Arrange
+        var tenantContextAccessor = ServiceProvider.GetRequiredService<TenantContextAccessor<TestDbContext>>();
+        tenantContextAccessor.SetCurrentTenantId(_tenantId);
+
+        // Act
+        tenantContextAccessor.SetCurrentTenantId(Guid.Empty);
+
+        // Assert
+        Assert.Equal(Guid.Empty, tenantContextAccessor.GetCurrentTenantId());
     }
 } 

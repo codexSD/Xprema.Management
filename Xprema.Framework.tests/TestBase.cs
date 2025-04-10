@@ -1,245 +1,222 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
-using Moq;
+using System;
 using System.Collections.Generic;
+using System.Threading.Tasks;
+using Microsoft.AspNetCore.Identity;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Moq;
+using Xprema.Framework.Entities.Common;
 using Xprema.Framework.Entities.HistoryFeature;
 using Xprema.Framework.Entities.Identity;
 using Xprema.Framework.Entities.MultiTenancy;
 using Xprema.Framework.Entities.Permission;
+using Xprema.Framework.Identity;
 
-namespace Xprema.Framework.Tests;
+namespace Xprema.Framework.tests;
 
-public abstract class TestBase : IDisposable
+public abstract class TestBase
 {
-    protected readonly TestDbContext DbContext;
-    protected readonly ITenantContextAccessor TenantContextAccessor;
-    protected readonly ITenantService TenantService;
-    protected readonly IPermissionService PermissionService;
-    protected readonly IAuthenticationService AuthenticationService;
-    protected readonly IAuditLogService AuditLogService;
-    protected readonly ITokenService TokenService;
-    protected readonly ServiceProvider ServiceProvider;
-    protected readonly IConfiguration Configuration;
-    
+    protected readonly TestDbContext _dbContext;
+    protected readonly Mock<IEntityHistoryService> _historyServiceMock;
+    protected readonly Guid _tenantId = Guid.NewGuid();
+    protected readonly string _userId = Guid.NewGuid().ToString();
+    protected readonly IServiceProvider ServiceProvider;
+
     protected TestBase()
     {
-        // Create configuration
-        var configuration = new ConfigurationBuilder()
-            .AddInMemoryCollection(new Dictionary<string, string>
-            {
-                ["Jwt:Secret"] = "TestSecretKey12345678901234567890TestSecretKey",
-                ["Jwt:Issuer"] = "XpremaTest",
-                ["Jwt:Audience"] = "XpremaTestUsers"
-            })
-            .Build();
-            
-        Configuration = configuration;
-        
-        // Create a service collection
         var services = new ServiceCollection();
-        
-        // Add logging
-        services.AddLogging();
-        
-        // Add the in-memory database
-        services.AddDbContext<TestDbContext>(options =>
-            options.UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString()));
-            
-        // Register DbContext as both TestDbContext and DbContext for service resolution
-        services.AddScoped<DbContext>(provider => provider.GetRequiredService<TestDbContext>());
-        
-        // Add HttpContextAccessor mock
-        var httpContextAccessorMock = new Mock<Microsoft.AspNetCore.Http.IHttpContextAccessor>();
-        services.AddSingleton(httpContextAccessorMock.Object);
-        
-        // Add services
-        services.AddSingleton<IConfiguration>(configuration);
-        services.AddScoped<ITenantContextAccessor, TenantContextAccessor<TestDbContext>>();
-        services.AddScoped<ITenantService, TenantService<TestDbContext>>();
-        services.AddScoped<IPermissionService, PermissionService<TestDbContext>>();
-        services.AddScoped<ITokenService, TokenService>();
-        services.AddScoped<IAuditLogService, AuditLogService>();
-        services.AddScoped<IAuthenticationService>(provider => 
-            new AuthenticationService(
-                provider.GetRequiredService<TestDbContext>(),
-                provider.GetRequiredService<ILogger<AuthenticationService>>(),
-                provider.GetRequiredService<ITenantService>(),
-                provider.GetRequiredService<ITenantContextAccessor>(),
-                provider.GetRequiredService<Microsoft.AspNetCore.Http.IHttpContextAccessor>(),
-                provider.GetRequiredService<ITokenService>()
-            ));
-        
-        // Build the service provider
+        ConfigureServices(services);
         ServiceProvider = services.BuildServiceProvider();
+
+        _dbContext = ServiceProvider.GetRequiredService<TestDbContext>();
+        _historyServiceMock = new Mock<IEntityHistoryService>();
+        SetupHistoryServiceMock();
+        InitializeTestData();
+    }
+
+    private void SetupHistoryServiceMock()
+    {
+        _historyServiceMock.Setup(x => x.LogEntityCreatedAsync(It.IsAny<BaseEntity<Guid>>()))
+            .Returns(Task.CompletedTask);
+        _historyServiceMock.Setup(x => x.LogEntityUpdatedAsync(
+            It.IsAny<BaseEntity<Guid>>(),
+            It.IsAny<Dictionary<string, (object? OldValue, object? NewValue)>>()))
+            .Returns(Task.CompletedTask);
+        _historyServiceMock.Setup(x => x.LogEntityDeletedAsync(It.IsAny<BaseEntity<Guid>>()))
+            .Returns(Task.CompletedTask);
+        _historyServiceMock.Setup(x => x.GetEntityHistoryAsync<BaseEntity<Guid>>(It.IsAny<Guid>()))
+            .ReturnsAsync(new List<EntityHistoryRecord>());
+        _historyServiceMock.Setup(x => x.GetEntityVersionAsync<BaseEntity<Guid>>(It.IsAny<Guid>(), It.IsAny<DateTime>()))
+            .ReturnsAsync((BaseEntity<Guid>?)null);
+    }
+
+    protected virtual void ConfigureServices(IServiceCollection services)
+    {
+        services.AddDbContext<TestDbContext>(options =>
+            options.UseInMemoryDatabase($"TestDb_{Guid.NewGuid()}"));
+
+        // Register TenantContextAccessor with proper type argument
+        services.AddScoped<TenantContextAccessor<TestDbContext>>();
         
-        // Get services
-        DbContext = ServiceProvider.GetRequiredService<TestDbContext>();
-        TenantContextAccessor = ServiceProvider.GetRequiredService<ITenantContextAccessor>();
-        TenantService = ServiceProvider.GetRequiredService<ITenantService>();
-        PermissionService = ServiceProvider.GetRequiredService<IPermissionService>();
-        AuthenticationService = ServiceProvider.GetRequiredService<IAuthenticationService>();
-        AuditLogService = ServiceProvider.GetRequiredService<IAuditLogService>();
-        TokenService = ServiceProvider.GetRequiredService<ITokenService>();
-    }
-    
-    public void Dispose()
-    {
-        DbContext.Database.EnsureDeleted();
-        DbContext.Dispose();
-        ServiceProvider.Dispose();
-    }
-    
-    protected async Task<Tenant> CreateTestTenantAsync(string name = "Test Tenant", string identifier = "test")
-    {
-        try {
-            return await TenantService.CreateTenantAsync(
-                name: name,
-                identifier: identifier,
-                description: "Test tenant description",
-                storageMode: TenantStorageMode.SharedDatabase,
-                connectionString: null,
-                createdBy: "system");
-        }
-        catch (Exception) {
-            // If service method fails, create the tenant directly
-            var tenant = new Tenant
-            {
-                Id = Guid.NewGuid(),
-                Name = name,
-                Identifier = identifier,
-                Description = "Test tenant description",
-                StorageMode = TenantStorageMode.SharedDatabase,
-                Settings = new Dictionary<string, string>(),
-                CreatedBy = "system",
-                CreatedDate = DateTime.UtcNow
-            };
+        // Register PermissionService with proper type argument
+        services.AddScoped<PermissionService<TestDbContext>>();
+        
+        // Register other required services
+        services.AddScoped<IEntityHistoryService>(_ => _historyServiceMock.Object);
+        
+        // Register Identity services
+        services.AddIdentity<ApplicationUser, IdentityRole>()
+            .AddEntityFrameworkStores<TestDbContext>()
+            .AddDefaultTokenProviders();
             
-            DbContext.Add(tenant);
-            await DbContext.SaveChangesAsync();
-            return tenant;
-        }
+        // Register other framework services
+        services.AddScoped<ITokenService, TokenService>();
+        services.AddScoped<IAuthenticationService, AuthenticationService>();
+        services.AddScoped<IAuditLogService, AuditLogService>();
     }
-    
-    protected async Task<(Tenant, Guid)> CreateTestTenantWithUserAsync(string name = "Test Tenant", string identifier = "test")
+
+    protected virtual void InitializeTestData()
     {
-        var tenant = await CreateTestTenantAsync(name, identifier);
-        var userId = Guid.NewGuid();
-        
-        // Set current tenant
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
-        
-        // Add user to tenant
-        await TenantService.AddUserToTenantAsync(tenant.Id, userId, isAdmin: true, "system");
-        
-        return (tenant, userId);
-    }
-    
-    protected async Task<(Tenant, Guid, Role, Permission)> CreateTestTenantWithUserAndPermissionAsync(
-        string name = "Test Tenant", 
-        string identifier = "test",
-        string roleName = "Admin",
-        string permissionName = "TestPermission",
-        string permissionSystemName = "Test.Permission")
-    {
-        var (tenant, userId) = await CreateTestTenantWithUserAsync(name, identifier);
-        
-        // Set current tenant
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
-        
-        // Create role
-        var role = await PermissionService.CreateRoleAsync(roleName, "Test role", isSystemRole: true, "system");
-        
-        // Create permission
-        var permission = await PermissionService.CreatePermissionAsync(
-            permissionName, 
-            permissionSystemName, 
-            "Test permission", 
-            "Test", 
-            "system");
-        
-        // Assign permission to role
-        await PermissionService.AssignPermissionToRoleAsync(role.Id, permission.Id, "system");
-        
-        // Assign role to user
-        await PermissionService.AssignRoleToUserAsync(userId, role.Id, "system");
-        
-        return (tenant, userId, role, permission);
-    }
-    
-    protected async Task<ApplicationUser> CreateTestUserAsync(
-        string username = "testuser",
-        string email = "test@example.com",
-        string password = "Password123!",
-        Guid? tenantId = null)
-    {
-        // Register user
-        var request = new RegisterUserRequest
+        // Create test tenant
+        var tenant = new Tenant
         {
-            Username = username,
-            Email = email,
-            Password = password,
-            DisplayName = "Test User",
-            TenantId = tenantId
+            Id = _tenantId,
+            Name = "Test Tenant",
+            Identifier = "test-tenant",
+            IsActive = true,
+            Settings = new Dictionary<string, string>()
         };
-        
-        var result = await AuthenticationService.RegisterUserAsync(request);
-        
-        if (!result.Succeeded)
+        _dbContext.Tenants.Add(tenant);
+
+        // Create test user
+        var user = new ApplicationUser
         {
-            // If registration fails, try to manually create a user for testing
-            try {
-                var user = new ApplicationUser
-                {
-                    Id = Guid.NewGuid(),
-                    Username = username,
-                    Email = email,
-                    DisplayName = "Test User",
-                    PasswordHash = "dGVzdHBhc3N3b3Jk", // Simple hash for testing
-                    EmailConfirmed = true,
-                    CreatedBy = "system",
-                    CreatedDate = DateTime.UtcNow
-                };
-                
-                DbContext.Add(user);
-                await DbContext.SaveChangesAsync();
-                
-                // Associate with tenant if provided
-                if (tenantId.HasValue)
-                {
-                    await TenantService.AddUserToTenantAsync(
-                        tenantId.Value, 
-                        user.Id, 
-                        isAdmin: false, 
-                        "system");
-                }
-                
-                return user;
-            }
-            catch (Exception ex2)
-            {
-                throw new Exception($"Failed to create test user: {result.ErrorMessage}", ex2);
-            }
-        }
-        
-        // Get the user
-        if (!Guid.TryParse(result.UserId, out var userId))
+            Id = _userId,
+            UserName = "testuser",
+            Email = "test@example.com",
+            IsActive = true,
+            TenantId = _tenantId.ToString()
+        };
+        _dbContext.Users.Add(user);
+
+        // Create test role
+        var roleId = Guid.NewGuid();
+        var role = new Role
         {
-            throw new Exception("Invalid user ID returned");
-        }
-        
-        var registeredUser = await DbContext.Users.FindAsync(userId);
-        
-        if (registeredUser == null)
+            Id = roleId,
+            Name = "Test Role",
+            Description = "Test role description",
+            IsSystemRole = false,
+            TenantId = _tenantId
+        };
+        _dbContext.Set<Role>().Add(role);
+
+        // Create test permission
+        var permission = new Permission
         {
-            throw new Exception("User not found after registration");
-        }
+            Id = Guid.NewGuid(),
+            Name = "Test Permission",
+            SystemName = "test.permission",
+            Description = "Test permission description",
+            Group = "Test",
+            TenantId = _tenantId
+        };
+        _dbContext.Set<Permission>().Add(permission);
+
+        // Create test role permission
+        var rolePermission = new RolePermission
+        {
+            Id = Guid.NewGuid(),
+            RoleId = roleId,
+            PermissionId = permission.Id,
+            TenantId = _tenantId
+        };
+        _dbContext.Set<RolePermission>().Add(rolePermission);
+
+        // Create test user role
+        var userRole = new Xprema.Framework.Entities.Permission.UserRole
+        {
+            Id = Guid.NewGuid(),
+            UserId = Guid.Parse(_userId),
+            RoleId = roleId,
+            TenantId = _tenantId
+        };
+        _dbContext.Set<Xprema.Framework.Entities.Permission.UserRole>().Add(userRole);
+
+        _dbContext.SaveChanges();
+    }
+
+    protected async Task<Tenant> CreateTestTenantAsync(string name = "Test Tenant", string identifier = "test-tenant")
+    {
+        var tenant = new Tenant
+        {
+            Id = Guid.NewGuid(),
+            Name = name,
+            Identifier = identifier,
+            IsActive = true,
+            Settings = new Dictionary<string, string>()
+        };
+        _dbContext.Tenants.Add(tenant);
+        await _dbContext.SaveChangesAsync();
+        return tenant;
+    }
+
+    protected async Task<ApplicationUser> CreateTestUserAsync(string userName = "testuser", string email = "test@example.com", Guid? tenantId = null)
+    {
+        var user = new ApplicationUser
+        {
+            Id = Guid.NewGuid().ToString(),
+            UserName = userName,
+            Email = email,
+            IsActive = true,
+            TenantId = (tenantId ?? _tenantId).ToString()
+        };
+        _dbContext.Users.Add(user);
+        await _dbContext.SaveChangesAsync();
+        return user;
+    }
+
+    protected async Task<(Tenant Tenant, ApplicationUser User, Permission Permission)> CreateTestTenantWithUserAndPermissionAsync()
+    {
+        var tenant = await CreateTestTenantAsync();
+        var user = await CreateTestUserAsync(tenantId: tenant.Id);
         
-        // Make email confirmed by default for testing
-        registeredUser.EmailConfirmed = true;
-        await DbContext.SaveChangesAsync();
-        
-        return registeredUser;
+        var permission = new Permission
+        {
+            Id = Guid.NewGuid(),
+            Name = "Test Permission",
+            SystemName = "test.permission",
+            Group = "Test",
+            Description = "Test permission description"
+        };
+        _dbContext.Permissions.Add(permission);
+        await _dbContext.SaveChangesAsync();
+
+        return (tenant, user, permission);
+    }
+
+    protected async Task<List<EntityHistoryRecord>> GetHistoryAsync<TEntity>(Guid id) where TEntity : BaseEntity<Guid>
+    {
+        return await _historyServiceMock.Object.GetEntityHistoryAsync<TEntity>(id);
+    }
+
+    protected async Task<TEntity?> GetVersionAsync<TEntity>(Guid id, DateTime pointInTime) where TEntity : BaseEntity<Guid>
+    {
+        return await _historyServiceMock.Object.GetEntityVersionAsync<TEntity>(id, pointInTime);
+    }
+
+    protected async Task<TEntity> UpdateEntityAsync<TEntity>(TEntity entity, Dictionary<string, (object? OldValue, object? NewValue)> propertyChanges) where TEntity : BaseEntity<Guid>
+    {
+        _dbContext.Set<TEntity>().Update(entity);
+        await _dbContext.SaveChangesAsync();
+        await _historyServiceMock.Object.LogEntityUpdatedAsync(entity, propertyChanges);
+        return entity;
+    }
+
+    protected async Task DeleteEntityAsync<TEntity>(TEntity entity) where TEntity : BaseEntity<Guid>
+    {
+        _dbContext.Set<TEntity>().Remove(entity);
+        await _dbContext.SaveChangesAsync();
+        await _historyServiceMock.Object.LogEntityDeletedAsync(entity);
     }
 } 

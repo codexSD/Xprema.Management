@@ -1,14 +1,17 @@
+using System;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
+using Xprema.Framework.Core;
 using Xprema.Framework.Sample;
 using Xprema.Framework.Sample.Features;
+using Xunit;
 
 namespace Xprema.Framework.tests.Sample;
 
-public class SampleModuleTests
+public class SampleModuleTests : TestBase
 {
     private readonly IServiceCollection _services;
     private readonly IConfiguration _configuration;
@@ -19,9 +22,9 @@ public class SampleModuleTests
     public SampleModuleTests()
     {
         _services = new ServiceCollection();
-        _configuration = new ConfigurationBuilder().Build();
+        _configuration = ServiceProvider.GetRequiredService<IConfiguration>();
         _appBuilderMock = new Mock<IApplicationBuilder>();
-        _module = new SampleModule();
+        _module = new SampleModule(_configuration);
         _loggingServiceMock = new Mock<ILoggingService>();
     }
 
@@ -109,5 +112,20 @@ public class SampleModuleTests
 
         // Assert
         Assert.Contains(features, f => f is LoggingFeature);
+    }
+
+    [Fact]
+    public void AddSampleModule_ShouldRegisterRequiredServices()
+    {
+        // Arrange
+        var services = new ServiceCollection();
+        var module = new SampleModule(_configuration);
+
+        // Act
+        module.RegisterServices(services, _configuration);
+
+        // Assert
+        var serviceProvider = services.BuildServiceProvider();
+        Assert.NotNull(serviceProvider.GetService<ISampleService>());
     }
 } 

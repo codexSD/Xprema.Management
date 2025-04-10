@@ -1,0 +1,7 @@
+/Users/samerabdallah/RiderProjects/Xprema.Management/Xprema.Framework.tests/bin/Debug/net8.0/CoverletSourceRootsMapping_Xprema.Framework.tests
+/Users/samerabdallah/RiderProjects/Xprema.Management/Xprema.Framework.tests/obj/Debug/net8.0/Xprema.Framework.tests.csproj.AssemblyReference.cache
+/Users/samerabdallah/RiderProjects/Xprema.Management/Xprema.Framework.tests/obj/Debug/net8.0/Xprema.Framework.tests.GeneratedMSBuildEditorConfig.editorconfig
+/Users/samerabdallah/RiderProjects/Xprema.Management/Xprema.Framework.tests/obj/Debug/net8.0/Xprema.Framework.tests.AssemblyInfoInputs.cache
+/Users/samerabdallah/RiderProjects/Xprema.Management/Xprema.Framework.tests/obj/Debug/net8.0/Xprema.Framework.tests.AssemblyInfo.cs
+/Users/samerabdallah/RiderProjects/Xprema.Management/Xprema.Framework.tests/obj/Debug/net8.0/Xprema.Framework.tests.csproj.CoreCompileInputs.cache
+/Users/samerabdallah/RiderProjects/Xprema.Management/Xprema.Framework.tests/obj/Debug/net8.0/Xprema.Framework.tests.sourcelink.json

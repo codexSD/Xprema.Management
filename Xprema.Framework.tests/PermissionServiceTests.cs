@@ -1,22 +1,52 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using System;
+using System.Threading.Tasks;
 using Xprema.Framework.Entities.MultiTenancy;
 using Xprema.Framework.Entities.Permission;
+using Xprema.Framework.tests;
+using Xprema.Framework.Identity;
+using Xunit;
 
 namespace Xprema.Framework.Tests;
 
-public class PermissionServiceTests : TestBase
+public class PermissionServiceTests : TestBase, IAsyncLifetime
 {
+    private readonly TenantContextAccessor<TestDbContext> _tenantContextAccessor;
+    private readonly PermissionService<TestDbContext> _permissionService;
+
+    public PermissionServiceTests()
+    {
+        _tenantContextAccessor = ServiceProvider.GetRequiredService<TenantContextAccessor<TestDbContext>>();
+        _permissionService = ServiceProvider.GetRequiredService<PermissionService<TestDbContext>>();
+    }
+
+    public async Task InitializeAsync()
+    {
+        // Ensure database is clean before tests
+        await _dbContext.Database.EnsureDeletedAsync();
+        await _dbContext.Database.EnsureCreatedAsync();
+    }
+
+    public async Task DisposeAsync()
+    {
+        // Clean up after tests
+        await _dbContext.Database.EnsureDeletedAsync();
+    }
+
     [Fact]
     public async Task CreateRole_ShouldReturnValidRole()
     {
         // Arrange
         var tenant = await CreateTestTenantAsync();
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        Assert.NotNull(tenant);
+        
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
         string roleName = "Admin";
         string description = "Administrator role";
         
         // Act
-        var role = await PermissionService.CreateRoleAsync(roleName, description, true, "system");
+        var role = await _permissionService.CreateRoleAsync(roleName, description, true, "system");
         
         // Assert
         Assert.NotNull(role);
@@ -26,20 +56,48 @@ public class PermissionServiceTests : TestBase
         Assert.Equal("system", role.CreatedBy);
         Assert.Equal(tenant.Id, role.TenantId);
     }
+
+    [Fact]
+    public async Task CreateRole_ShouldThrowException_WhenNameIsEmpty()
+    {
+        // Arrange
+        var tenant = await CreateTestTenantAsync();
+        Assert.NotNull(tenant);
+        
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(() => 
+            _permissionService.CreateRoleAsync("", "Description", false, "system"));
+    }
+
+    [Fact]
+    public async Task CreateRole_ShouldThrowException_WhenCreatedByIsEmpty()
+    {
+        // Arrange
+        var tenant = await CreateTestTenantAsync();
+        Assert.NotNull(tenant);
+        
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        
+        // Act & Assert
+        await Assert.ThrowsAsync<ArgumentException>(() => 
+            _permissionService.CreateRoleAsync("Admin", "Description", false, ""));
+    }
     
     [Fact]
     public async Task CreatePermission_ShouldReturnValidPermission()
     {
         // Arrange
         var tenant = await CreateTestTenantAsync();
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
         string permissionName = "Create Product";
         string systemName = "Products.Create";
         string description = "Permission to create products";
         string group = "Products";
         
         // Act
-        var permission = await PermissionService.CreatePermissionAsync(
+        var permission = await _permissionService.CreatePermissionAsync(
             permissionName, 
             systemName, 
             description, 
@@ -57,26 +115,25 @@ public class PermissionServiceTests : TestBase
     }
     
     [Fact]
-    public async Task AssignPermissionToRole_ShouldCreateAssociation()
+    public async Task AssignPermissionToRole_ShouldCreateValidRolePermission()
     {
         // Arrange
-        var tenant = await CreateTestTenantAsync();
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
-        var role = await PermissionService.CreateRoleAsync("Admin", "Administrator role", true, "system");
-        var permission = await PermissionService.CreatePermissionAsync(
-            "Create Product", 
-            "Products.Create", 
-            "Permission to create products", 
-            "Products", 
-            "system");
+        var (tenant, _, permission) = await CreateTestTenantWithUserAndPermissionAsync();
+        var role = await _permissionService.CreateRoleAsync("Test Role", "Test Description", false, "system");
+        
+        // Make sure we're in the correct tenant context
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
         
         // Act
-        await PermissionService.AssignPermissionToRoleAsync(role.Id, permission.Id, "system");
+        await _permissionService.AssignPermissionToRoleAsync(role.Id, permission.Id, "system");
         
         // Assert
-        var rolePermission = await DbContext.RolePermissions
-            .FirstOrDefaultAsync(rp => rp.RoleId == role.Id && rp.PermissionId == permission.Id);
+        var rolePermission = await _dbContext.Set<RolePermission>()
+            .FirstOrDefaultAsync(rp => rp.RoleId == role.Id && rp.PermissionId == permission.Id && !rp.IsDeleted);
+            
         Assert.NotNull(rolePermission);
+        Assert.Equal(role.Id, rolePermission.RoleId);
+        Assert.Equal(permission.Id, rolePermission.PermissionId);
         Assert.Equal(tenant.Id, rolePermission.TenantId);
     }
     
@@ -85,21 +142,21 @@ public class PermissionServiceTests : TestBase
     {
         // Arrange
         var tenant = await CreateTestTenantAsync();
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
-        var role = await PermissionService.CreateRoleAsync("Admin", "Administrator role", true, "system");
-        var permission = await PermissionService.CreatePermissionAsync(
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        var role = await _permissionService.CreateRoleAsync("Admin", "Administrator role", true, "system");
+        var permission = await _permissionService.CreatePermissionAsync(
             "Create Product", 
             "Products.Create", 
             "Permission to create products", 
             "Products", 
             "system");
-        await PermissionService.AssignPermissionToRoleAsync(role.Id, permission.Id, "system");
+        await _permissionService.AssignPermissionToRoleAsync(role.Id, permission.Id, "system");
         
         // Act
-        await PermissionService.RemovePermissionFromRoleAsync(role.Id, permission.Id, "admin");
+        await _permissionService.RemovePermissionFromRoleAsync(role.Id, permission.Id, "admin");
         
         // Assert
-        var rolePermission = await DbContext.RolePermissions
+        var rolePermission = await _dbContext.Set<RolePermission>()
             .FirstOrDefaultAsync(rp => rp.RoleId == role.Id && rp.PermissionId == permission.Id);
         Assert.NotNull(rolePermission);
         Assert.True(rolePermission.IsDeleted);
@@ -108,21 +165,25 @@ public class PermissionServiceTests : TestBase
     }
     
     [Fact]
-    public async Task AssignRoleToUser_ShouldCreateAssociation()
+    public async Task AssignRoleToUser_ShouldCreateValidUserRole()
     {
         // Arrange
-        var tenant = await CreateTestTenantAsync();
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
-        var role = await PermissionService.CreateRoleAsync("Admin", "Administrator role", true, "system");
-        var userId = Guid.NewGuid();
+        var (tenant, user, _) = await CreateTestTenantWithUserAndPermissionAsync();
+        var role = await _permissionService.CreateRoleAsync("Test Role", "Test Description", false, "system");
+        
+        // Make sure we're in the correct tenant context
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
         
         // Act
-        await PermissionService.AssignRoleToUserAsync(userId, role.Id, "system");
+        await _permissionService.AssignRoleToUserAsync(Guid.Parse(user.Id), role.Id, "system");
         
         // Assert
-        var userRole = await DbContext.UserRoles
-            .FirstOrDefaultAsync(ur => ur.UserId == userId && ur.RoleId == role.Id);
+        var userRole = await _dbContext.Set<UserRole>()
+            .FirstOrDefaultAsync(ur => ur.UserId == Guid.Parse(user.Id) && ur.RoleId == role.Id && !ur.IsDeleted);
+            
         Assert.NotNull(userRole);
+        Assert.Equal(Guid.Parse(user.Id), userRole.UserId);
+        Assert.Equal(role.Id, userRole.RoleId);
         Assert.Equal(tenant.Id, userRole.TenantId);
     }
     
@@ -130,35 +191,39 @@ public class PermissionServiceTests : TestBase
     public async Task RemoveRoleFromUser_ShouldMarkAssociationAsDeleted()
     {
         // Arrange
-        var tenant = await CreateTestTenantAsync();
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
-        var role = await PermissionService.CreateRoleAsync("Admin", "Administrator role", true, "system");
-        var userId = Guid.NewGuid();
-        await PermissionService.AssignRoleToUserAsync(userId, role.Id, "system");
+        var (tenant, user, _) = await CreateTestTenantWithUserAndPermissionAsync();
+        Assert.NotNull(tenant);
+        Assert.NotNull(user);
+        
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        
+        var role = await _permissionService.CreateRoleAsync("TestRole", "Test Role Description", true, "system");
+        await _permissionService.AssignRoleToUserAsync(Guid.Parse(user.Id), role.Id, "system");
         
         // Act
-        await PermissionService.RemoveRoleFromUserAsync(userId, role.Id, "admin");
+        await _permissionService.RemoveRoleFromUserAsync(Guid.Parse(user.Id), role.Id, "system");
         
         // Assert
-        var userRole = await DbContext.UserRoles
-            .FirstOrDefaultAsync(ur => ur.UserId == userId && ur.RoleId == role.Id);
+        var userRole = await _dbContext.Set<UserRole>()
+            .FirstOrDefaultAsync(ur => ur.UserId == Guid.Parse(user.Id) && ur.RoleId == role.Id);
+        
         Assert.NotNull(userRole);
         Assert.True(userRole.IsDeleted);
-        Assert.Equal("admin", userRole.DeletedBy);
         Assert.NotNull(userRole.DeletedDate);
+        Assert.Equal("system", userRole.DeletedBy);
     }
     
     [Fact]
     public async Task HasPermission_ShouldReturnTrueWhenUserHasPermission()
     {
         // Arrange
-        var (tenant, userId, role, permission) = await CreateTestTenantWithUserAndPermissionAsync();
+        var (tenant, user, permission) = await CreateTestTenantWithUserAndPermissionAsync();
         
         // Make sure we're in the correct tenant context
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
         
         // Act
-        var hasPermission = await PermissionService.HasPermissionAsync(userId, permission.SystemName);
+        var hasPermission = await _permissionService.HasPermissionAsync(Guid.Parse(user.Id), permission.SystemName);
         
         // Assert
         Assert.True(hasPermission);
@@ -168,13 +233,13 @@ public class PermissionServiceTests : TestBase
     public async Task HasPermission_ShouldReturnFalseWhenUserDoesNotHavePermission()
     {
         // Arrange
-        var (tenant, userId, _, _) = await CreateTestTenantWithUserAndPermissionAsync();
+        var (tenant, user, _) = await CreateTestTenantWithUserAndPermissionAsync();
         
         // Make sure we're in the correct tenant context
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
         
         // Act
-        var hasPermission = await PermissionService.HasPermissionAsync(userId, "NonExistentPermission");
+        var hasPermission = await _permissionService.HasPermissionAsync(Guid.Parse(user.Id), "NonExistentPermission");
         
         // Assert
         Assert.False(hasPermission);
@@ -184,15 +249,15 @@ public class PermissionServiceTests : TestBase
     public async Task HasAnyPermission_ShouldReturnTrueWhenUserHasAnyPermission()
     {
         // Arrange
-        var (tenant, userId, _, permission) = await CreateTestTenantWithUserAndPermissionAsync();
+        var (tenant, user, permission) = await CreateTestTenantWithUserAndPermissionAsync();
         
         // Make sure we're in the correct tenant context
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
         
         var permissionNames = new[] { permission.SystemName, "NonExistentPermission" };
         
         // Act
-        var hasAnyPermission = await PermissionService.HasAnyPermissionAsync(userId, permissionNames);
+        var hasAnyPermission = await _permissionService.HasAnyPermissionAsync(Guid.Parse(user.Id), permissionNames);
         
         // Assert
         Assert.True(hasAnyPermission);
@@ -202,146 +267,270 @@ public class PermissionServiceTests : TestBase
     public async Task HasAnyPermission_ShouldReturnFalseWhenUserHasNoPermissions()
     {
         // Arrange
-        var (tenant, userId, _, _) = await CreateTestTenantWithUserAndPermissionAsync();
+        var (tenant, user, _) = await CreateTestTenantWithUserAndPermissionAsync();
         
         // Make sure we're in the correct tenant context
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
         
         var permissionNames = new[] { "NonExistentPermission1", "NonExistentPermission2" };
         
         // Act
-        var hasAnyPermission = await PermissionService.HasAnyPermissionAsync(userId, permissionNames);
+        var hasAnyPermission = await _permissionService.HasAnyPermissionAsync(Guid.Parse(user.Id), permissionNames);
         
         // Assert
         Assert.False(hasAnyPermission);
     }
     
     [Fact]
-    public async Task HasAllPermissions_ShouldReturnTrueWhenUserHasAllPermissions()
-    {
-        // Arrange
-        var (tenant, userId, role, permission) = await CreateTestTenantWithUserAndPermissionAsync();
-        
-        // Ensure the tenant context is set
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
-        
-        // Create a second permission and assign to the same role
-        var permission2 = await PermissionService.CreatePermissionAsync(
-            "Edit Product",
-            "Products.Edit",
-            "Permission to edit products",
-            "Products",
-            "system");
-        await PermissionService.AssignPermissionToRoleAsync(role.Id, permission2.Id, "system");
-        
-        var permissionNames = new[] { permission.SystemName, permission2.SystemName };
-        
-        // Act
-        var hasAllPermissions = await PermissionService.HasAllPermissionsAsync(userId, permissionNames);
-        
-        // Assert
-        Assert.True(hasAllPermissions);
-    }
-    
-    [Fact]
     public async Task HasAllPermissions_ShouldReturnFalseWhenUserDoesNotHaveAllPermissions()
     {
         // Arrange
-        var (tenant, userId, _, permission) = await CreateTestTenantWithUserAndPermissionAsync();
+        var (tenant, user, _) = await CreateTestTenantWithUserAndPermissionAsync();
+        Assert.NotNull(tenant);
+        Assert.NotNull(user);
         
-        // Ensure the tenant context is set
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
         
-        var permissionNames = new[] { permission.SystemName, "NonExistentPermission" };
+        var role = await _permissionService.CreateRoleAsync("TestRole", "Test Role Description", true, "system");
+        await _permissionService.AssignRoleToUserAsync(Guid.Parse(user.Id), role.Id, "system");
+        
+        var permission1 = await _permissionService.CreatePermissionAsync(
+            "Permission 1",
+            "Test.Permission1",
+            "Test Permission 1",
+            "TestGroup",
+            "system"
+        );
+        
+        var permission2 = await _permissionService.CreatePermissionAsync(
+            "Permission 2",
+            "Test.Permission2",
+            "Test Permission 2",
+            "TestGroup",
+            "system"
+        );
+        
+        await _permissionService.AssignPermissionToRoleAsync(role.Id, permission1.Id, "system");
         
         // Act
-        var hasAllPermissions = await PermissionService.HasAllPermissionsAsync(userId, permissionNames);
+        var hasAllPermissions = await _permissionService.HasAllPermissionsAsync(
+            Guid.Parse(user.Id),
+            new[] { permission1.SystemName, permission2.SystemName }
+        );
         
         // Assert
         Assert.False(hasAllPermissions);
     }
     
     [Fact]
-    public async Task GetUserPermissions_ShouldReturnAllPermissionsForUser()
+    public async Task HasAllPermissions_ShouldReturnTrueWhenUserHasAllPermissions()
     {
         // Arrange
-        var (tenant, userId, role, permission) = await CreateTestTenantWithUserAndPermissionAsync();
+        var (tenant, user, _) = await CreateTestTenantWithUserAndPermissionAsync();
+        Assert.NotNull(tenant);
+        Assert.NotNull(user);
         
-        // Ensure the tenant context is set
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
         
-        // Create a second permission and assign to the same role
-        var permission2 = await PermissionService.CreatePermissionAsync(
-            "Edit Product",
-            "Products.Edit",
-            "Permission to edit products",
-            "Products",
-            "system");
-        await PermissionService.AssignPermissionToRoleAsync(role.Id, permission2.Id, "system");
+        var role = await _permissionService.CreateRoleAsync("TestRole", "Test Role Description", true, "system");
+        await _permissionService.AssignRoleToUserAsync(Guid.Parse(user.Id), role.Id, "system");
+        
+        var permission1 = await _permissionService.CreatePermissionAsync(
+            "Permission 1",
+            "Test.Permission1",
+            "Test Permission 1",
+            "TestGroup",
+            "system"
+        );
+        
+        var permission2 = await _permissionService.CreatePermissionAsync(
+            "Permission 2",
+            "Test.Permission2",
+            "Test Permission 2",
+            "TestGroup",
+            "system"
+        );
+        
+        await _permissionService.AssignPermissionToRoleAsync(role.Id, permission1.Id, "system");
+        await _permissionService.AssignPermissionToRoleAsync(role.Id, permission2.Id, "system");
         
         // Act
-        var permissions = await PermissionService.GetUserPermissionsAsync(userId);
+        var hasAllPermissions = await _permissionService.HasAllPermissionsAsync(
+            Guid.Parse(user.Id),
+            new[] { permission1.SystemName, permission2.SystemName }
+        );
         
         // Assert
-        Assert.NotNull(permissions);
-        Assert.Equal(2, permissions.Count());
-        Assert.Contains(permissions, p => p.SystemName == permission.SystemName);
-        Assert.Contains(permissions, p => p.SystemName == permission2.SystemName);
+        Assert.True(hasAllPermissions);
     }
     
     [Fact]
-    public async Task GetUserRoles_ShouldReturnAllRolesForUser()
+    public async Task GetUserPermissions_ShouldReturnValidPermissions()
     {
         // Arrange
-        var (tenant, userId, role, _) = await CreateTestTenantWithUserAndPermissionAsync();
+        var (tenant, user, permission) = await CreateTestTenantWithUserAndPermissionAsync();
+        var role = await _permissionService.CreateRoleAsync("Test Role", "Test Description", false, "system");
         
-        // Ensure the tenant context is set
-        TenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        // Make sure we're in the correct tenant context
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
         
-        // Create a second role and assign to the same user
-        var role2 = await PermissionService.CreateRoleAsync("Editor", "Editor role", false, "system");
-        await PermissionService.AssignRoleToUserAsync(userId, role2.Id, "system");
+        // Assign role to user and permission to role
+        await _permissionService.AssignRoleToUserAsync(Guid.Parse(user.Id), role.Id, "system");
+        await _permissionService.AssignPermissionToRoleAsync(role.Id, permission.Id, "system");
         
         // Act
-        var roles = await PermissionService.GetUserRolesAsync(userId);
+        var permissions = await _permissionService.GetUserPermissionsAsync(Guid.Parse(user.Id));
+        
+        // Assert
+        Assert.NotNull(permissions);
+        Assert.Single(permissions);
+        Assert.Equal(permission.Id, permissions.First().Id);
+    }
+    
+    [Fact]
+    public async Task GetUserRoles_ShouldReturnValidRoles()
+    {
+        // Arrange
+        var (tenant, user, _) = await CreateTestTenantWithUserAndPermissionAsync();
+        var role = await _permissionService.CreateRoleAsync("Test Role", "Test Description", false, "system");
+        
+        // Make sure we're in the correct tenant context
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        
+        // Assign role to user
+        await _permissionService.AssignRoleToUserAsync(Guid.Parse(user.Id), role.Id, "system");
+        
+        // Act
+        var roles = await _permissionService.GetUserRolesAsync(Guid.Parse(user.Id));
         
         // Assert
         Assert.NotNull(roles);
-        Assert.Equal(2, roles.Count());
-        Assert.Contains(roles, r => r.Id == role.Id);
-        Assert.Contains(roles, r => r.Id == role2.Id);
+        Assert.Single(roles);
+        Assert.Equal(role.Id, roles.First().Id);
     }
     
+    [Fact]
+    public async Task CreateTestTenantWithUserAndPermission_ShouldCreateValidEntities()
+    {
+        // Arrange
+        var tenant = await CreateTestTenantAsync();
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        
+        // Act
+        var result = await CreateTestTenantWithUserAndPermissionAsync();
+        var (testTenant, testUser, testPermission) = result;
+        
+        // Assert
+        Assert.NotNull(testTenant);
+        Assert.NotNull(testUser);
+        Assert.NotNull(testPermission);
+        Assert.Equal(tenant.Id, testTenant.Id);
+    }
+
     [Fact]
     public async Task Permission_ShouldBeIsolatedByTenant()
     {
         // Arrange
-        // Create first tenant with a role and permission
-        var (tenant1, userId1, role1, permission1) = await CreateTestTenantWithUserAndPermissionAsync(
-            name: "Tenant 1", 
-            identifier: "tenant1",
-            permissionSystemName: "Test.Permission1");
+        var tenant1 = await CreateTestTenantAsync("Tenant 1", "tenant-1");
+        var tenant2 = await CreateTestTenantAsync("Tenant 2", "tenant-2");
         
-        // Create second tenant with a role and permission
-        var (tenant2, userId2, role2, permission2) = await CreateTestTenantWithUserAndPermissionAsync(
-            name: "Tenant 2", 
-            identifier: "tenant2",
-            permissionSystemName: "Test.Permission2");
+        // Create test data for tenant 1
+        _tenantContextAccessor.SetCurrentTenantId(tenant1.Id);
+        var role1 = await _permissionService.CreateRoleAsync("Admin", "Administrator role", true, "system");
+        var permission1 = await _permissionService.CreatePermissionAsync(
+            "Create Product", 
+            "Products.Create", 
+            "Permission to create products", 
+            "Products", 
+            "system");
+        await _permissionService.AssignPermissionToRoleAsync(role1.Id, permission1.Id, "system");
+        var user1 = await CreateTestUserAsync("user1", "user1@example.com", tenant1.Id);
+        await _permissionService.AssignRoleToUserAsync(Guid.Parse(user1.Id), role1.Id, "system");
+        
+        // Create test data for tenant 2
+        _tenantContextAccessor.SetCurrentTenantId(tenant2.Id);
+        var role2 = await _permissionService.CreateRoleAsync("Admin", "Administrator role", true, "system");
+        var permission2 = await _permissionService.CreatePermissionAsync(
+            "Create Product", 
+            "Products.Create", 
+            "Permission to create products", 
+            "Products", 
+            "system");
+        await _permissionService.AssignPermissionToRoleAsync(role2.Id, permission2.Id, "system");
+        var user2 = await CreateTestUserAsync("user2", "user2@example.com", tenant2.Id);
+        await _permissionService.AssignRoleToUserAsync(Guid.Parse( user2.Id), role2.Id, "system");
         
         // Act & Assert for tenant 1
-        TenantContextAccessor.SetCurrentTenantId(tenant1.Id);
-        var hasPermission1InTenant1 = await PermissionService.HasPermissionAsync(userId1, permission1.SystemName);
-        var hasPermission2InTenant1 = await PermissionService.HasPermissionAsync(userId1, permission2.SystemName);
+        _tenantContextAccessor.SetCurrentTenantId(tenant1.Id);
+        var hasPermission1InTenant1 = await _permissionService.HasPermissionAsync(Guid.Parse(user1.Id), permission1.SystemName);
+        var hasPermission2InTenant1 = await _permissionService.HasPermissionAsync(Guid.Parse(user1.Id), permission2.SystemName);
         
         Assert.True(hasPermission1InTenant1);
         Assert.False(hasPermission2InTenant1);
         
         // Act & Assert for tenant 2
-        TenantContextAccessor.SetCurrentTenantId(tenant2.Id);
-        var hasPermission1InTenant2 = await PermissionService.HasPermissionAsync(userId2, permission1.SystemName);
-        var hasPermission2InTenant2 = await PermissionService.HasPermissionAsync(userId2, permission2.SystemName);
+        _tenantContextAccessor.SetCurrentTenantId(tenant2.Id);
+        var hasPermission1InTenant2 = await _permissionService.HasPermissionAsync(Guid.Parse(user2.Id), permission1.SystemName);
+        var hasPermission2InTenant2 = await _permissionService.HasPermissionAsync(Guid.Parse(user2.Id), permission2.SystemName);
         
         Assert.False(hasPermission1InTenant2);
         Assert.True(hasPermission2InTenant2);
+    }
+
+    [Fact]
+    public async Task HasPermission_ShouldReturnFalse_WhenUserDoesNotExist()
+    {
+        // Arrange
+        var tenant = await CreateTestTenantAsync();
+        Assert.NotNull(tenant);
+        
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        
+        // Act
+        var hasPermission = await _permissionService.HasPermissionAsync(
+            Guid.NewGuid(), // Non-existent user ID
+            "Some.Permission"
+        );
+        
+        // Assert
+        Assert.False(hasPermission);
+    }
+
+    [Fact]
+    public async Task HasPermission_ShouldReturnFalse_WhenPermissionDoesNotExist()
+    {
+        // Arrange
+        var (tenant, user, _) = await CreateTestTenantWithUserAndPermissionAsync();
+        Assert.NotNull(tenant);
+        Assert.NotNull(user);
+        
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        
+        // Act
+        var hasPermission = await _permissionService.HasPermissionAsync(
+            Guid.Parse(user.Id),
+            "Non.Existent.Permission"
+        );
+        
+        // Assert
+        Assert.False(hasPermission);
+    }
+
+    [Fact]
+    public async Task GetUserPermissions_ShouldReturnEmptyList_WhenUserHasNoRoles()
+    {
+        // Arrange
+        var (tenant, user, _) = await CreateTestTenantWithUserAndPermissionAsync();
+        Assert.NotNull(tenant);
+        Assert.NotNull(user);
+        
+        _tenantContextAccessor.SetCurrentTenantId(tenant.Id);
+        
+        // Act
+        var permissions = await _permissionService.GetUserPermissionsAsync(Guid.Parse(user.Id));
+        
+        // Assert
+        Assert.NotNull(permissions);
+        Assert.Empty(permissions);
     }
 } 

@@ -1,10 +1,28 @@
+using System;
+using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using Xprema.Framework.Entities.MultiTenancy;
+using Xprema.Framework.tests;
 
 namespace Xprema.Framework.Tests;
 
 public class TenantServiceTests : TestBase
 {
+    private readonly TenantService<TestDbContext> _tenantService;
+    private readonly ITenantContextAccessor _tenantContextAccessor;
+    private readonly IServiceProvider _serviceProvider;
+
+    public TenantServiceTests()
+    {
+        var services = new ServiceCollection();
+        services.AddDbContext<TestDbContext>(options => options.UseInMemoryDatabase("TestDb"));
+        _serviceProvider = services.BuildServiceProvider();
+        
+        _tenantContextAccessor = new TenantContextAccessor<TestDbContext>(_serviceProvider);
+        _tenantService = new TenantService<TestDbContext>(_dbContext, _tenantContextAccessor);
+    }
+
     [Fact]
     public async Task CreateTenant_ShouldReturnValidTenant()
     {
@@ -14,11 +32,11 @@ public class TenantServiceTests : TestBase
         string description = "Test tenant description";
         
         // Act
-        var tenant = await TenantService.CreateTenantAsync(
+        var tenant = await _tenantService.CreateTenantAsync(
             tenantName, 
             tenantIdentifier, 
             description, 
-            TenantStorageMode.SharedDatabase, 
+            TenantStorageMode.SharedDatabase,
             null, 
             "system");
         
@@ -40,7 +58,7 @@ public class TenantServiceTests : TestBase
         var tenant = await CreateTestTenantAsync();
         
         // Act
-        var retrievedTenant = await TenantService.GetTenantByIdAsync(tenant.Id);
+        var retrievedTenant = await _tenantService.GetTenantByIdAsync(tenant.Id);
         
         // Assert
         Assert.NotNull(retrievedTenant);
@@ -56,7 +74,7 @@ public class TenantServiceTests : TestBase
         var tenant = await CreateTestTenantAsync(identifier: identifier);
         
         // Act
-        var retrievedTenant = await TenantService.GetTenantByIdentifierAsync(identifier);
+        var retrievedTenant = await _tenantService.GetTenantByIdentifierAsync(identifier);
         
         // Assert
         Assert.NotNull(retrievedTenant);
@@ -74,7 +92,7 @@ public class TenantServiceTests : TestBase
         await CreateTestTenantAsync(name: "Tenant 3", identifier: "tenant3");
         
         // Act
-        var tenants = await TenantService.GetAllTenantsAsync();
+        var tenants = await _tenantService.GetAllTenantsAsync();
         
         // Assert
         Assert.NotNull(tenants);
@@ -92,7 +110,7 @@ public class TenantServiceTests : TestBase
         string connectionString = "Server=localhost;Database=UpdatedTenant;";
         
         // Act
-        var updatedTenant = await TenantService.UpdateTenantAsync(
+        var updatedTenant = await _tenantService.UpdateTenantAsync(
             tenant.Id,
             newName,
             newDescription,
@@ -120,10 +138,10 @@ public class TenantServiceTests : TestBase
         var tenant = await CreateTestTenantAsync();
         
         // Act
-        await TenantService.DeleteTenantAsync(tenant.Id, "admin");
+        await _tenantService.DeleteTenantAsync(tenant.Id, "admin");
         
         // Verify the tenant is marked as deleted but still exists in the database
-        var deletedTenant = await DbContext.Tenants.FindAsync(tenant.Id);
+        var deletedTenant = await _dbContext.Tenants.FindAsync(tenant.Id);
         Assert.NotNull(deletedTenant);
         Assert.True(deletedTenant.IsDeleted);
         Assert.Equal("admin", deletedTenant.DeletedBy);
@@ -139,10 +157,10 @@ public class TenantServiceTests : TestBase
         string value = "dark";
         
         // Act
-        await TenantService.AddTenantSettingAsync(tenant.Id, key, value, "admin");
+        await _tenantService.AddTenantSettingAsync(tenant.Id, key, value, "admin");
         
         // Assert
-        var updatedTenant = await TenantService.GetTenantByIdAsync(tenant.Id);
+        var updatedTenant = await _tenantService.GetTenantByIdAsync(tenant.Id);
         Assert.NotNull(updatedTenant);
         Assert.True(updatedTenant.Settings.ContainsKey(key));
         Assert.Equal(value, updatedTenant.Settings[key]);
@@ -155,13 +173,13 @@ public class TenantServiceTests : TestBase
         var tenant = await CreateTestTenantAsync();
         string key = "theme";
         string value = "dark";
-        await TenantService.AddTenantSettingAsync(tenant.Id, key, value, "admin");
+        await _tenantService.AddTenantSettingAsync(tenant.Id, key, value, "admin");
         
         // Act
-        await TenantService.RemoveTenantSettingAsync(tenant.Id, key, "admin");
+        await _tenantService.RemoveTenantSettingAsync(tenant.Id, key, "admin");
         
         // Assert
-        var updatedTenant = await TenantService.GetTenantByIdAsync(tenant.Id);
+        var updatedTenant = await _tenantService.GetTenantByIdAsync(tenant.Id);
         Assert.NotNull(updatedTenant);
         Assert.False(updatedTenant.Settings.ContainsKey(key));
     }
@@ -174,7 +192,7 @@ public class TenantServiceTests : TestBase
         var userId = Guid.NewGuid();
         
         // Act
-        var tenantUser = await TenantService.AddUserToTenantAsync(tenant.Id, userId, true, "admin");
+        var tenantUser = await _tenantService.AddUserToTenantAsync(tenant.Id, userId, true, "admin");
         
         // Assert
         Assert.NotNull(tenantUser);
@@ -183,7 +201,7 @@ public class TenantServiceTests : TestBase
         Assert.True(tenantUser.IsAdmin);
         
         // Verify the association is in the database
-        var users = await TenantService.GetTenantUsersAsync(tenant.Id);
+        var users = await _tenantService.GetTenantUsersAsync(tenant.Id);
         Assert.Single(users);
         Assert.Equal(userId, users.First().UserId);
     }
@@ -194,17 +212,17 @@ public class TenantServiceTests : TestBase
         // Arrange
         var tenant = await CreateTestTenantAsync();
         var userId = Guid.NewGuid();
-        await TenantService.AddUserToTenantAsync(tenant.Id, userId, false, "admin");
+        await _tenantService.AddUserToTenantAsync(tenant.Id, userId, false, "admin");
         
         // Act
-        await TenantService.RemoveUserFromTenantAsync(tenant.Id, userId, "admin");
+        await _tenantService.RemoveUserFromTenantAsync(tenant.Id, userId, "admin");
         
         // Assert
-        var users = await TenantService.GetTenantUsersAsync(tenant.Id);
+        var users = await _tenantService.GetTenantUsersAsync(tenant.Id);
         Assert.Empty(users); // Should not return deleted tenant-user associations
         
         // Verify the association is marked as deleted but still exists in the database
-        var deletedTenantUser = await DbContext.TenantUsers
+        var deletedTenantUser = await _dbContext.TenantUsers
             .FirstOrDefaultAsync(tu => tu.TenantId == tenant.Id && tu.UserId == userId);
         Assert.NotNull(deletedTenantUser);
         Assert.True(deletedTenantUser.IsDeleted);

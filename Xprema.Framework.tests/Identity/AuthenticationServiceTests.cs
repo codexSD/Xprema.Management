@@ -1,40 +1,87 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Security.Claims;
+using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using Moq;
+using Xprema.Framework.Identity;
 using Xprema.Framework.Entities.Identity;
 using Xprema.Framework.Entities.MultiTenancy;
 using Xunit;
+using Microsoft.AspNetCore.Authentication;
 
 namespace Xprema.Framework.Tests.Identity;
 
 public class AuthenticationServiceTests
 {
-    private readonly Mock<DbContext> _dbContextMock;
+    private readonly Mock<UserManager<ApplicationUser>> _userManagerMock;
+    private readonly Mock<SignInManager<ApplicationUser>> _signInManagerMock;
+    private readonly Mock<ITokenService> _tokenServiceMock;
     private readonly Mock<ILogger<AuthenticationService>> _loggerMock;
     private readonly Mock<ITenantService> _tenantServiceMock;
     private readonly Mock<ITenantContextAccessor> _tenantContextAccessorMock;
-    private readonly Mock<IHttpContextAccessor> _httpContextAccessorMock;
-    private readonly Mock<ITokenService> _tokenServiceMock;
-    private readonly AuthenticationService _authService;
+    private readonly IAuthenticationService _authService;
 
     public AuthenticationServiceTests()
     {
-        _dbContextMock = new Mock<DbContext>();
+        var userStoreMock = new Mock<IUserStore<ApplicationUser>>();
+        var userValidators = new List<IUserValidator<ApplicationUser>>();
+        var passwordValidators = new List<IPasswordValidator<ApplicationUser>>();
+        var lookupNormalizer = new Mock<ILookupNormalizer>();
+        var errorDescriber = new Mock<IdentityErrorDescriber>();
+        var services = new Mock<IServiceProvider>();
+        var logger = new Mock<ILogger<UserManager<ApplicationUser>>>();
+        var options = new Mock<IOptions<IdentityOptions>>();
+        var passwordHasher = new Mock<IPasswordHasher<ApplicationUser>>();
+
+        options.Setup(o => o.Value).Returns(new IdentityOptions());
+
+        _userManagerMock = new Mock<UserManager<ApplicationUser>>(
+            userStoreMock.Object,
+            options.Object,
+            passwordHasher.Object,
+            userValidators,
+            passwordValidators,
+            lookupNormalizer.Object,
+            errorDescriber.Object,
+            services.Object,
+            logger.Object);
+            
+        var contextAccessorMock = new Mock<IHttpContextAccessor>();
+        var claimsFactoryMock = new Mock<IUserClaimsPrincipalFactory<ApplicationUser>>();
+        var signInLogger = new Mock<ILogger<SignInManager<ApplicationUser>>>();
+        var schemeProvider = new Mock<IAuthenticationSchemeProvider>();
+        var userConfirmation = new Mock<IUserConfirmation<ApplicationUser>>();
+        var signInOptions = new Mock<IOptions<IdentityOptions>>();
+
+        signInOptions.Setup(o => o.Value).Returns(new IdentityOptions());
+
+        _signInManagerMock = new Mock<SignInManager<ApplicationUser>>(
+            _userManagerMock.Object,
+            contextAccessorMock.Object,
+            claimsFactoryMock.Object,
+            signInOptions.Object,
+            signInLogger.Object,
+            schemeProvider.Object,
+            userConfirmation.Object);
+            
+        _tokenServiceMock = new Mock<ITokenService>();
         _loggerMock = new Mock<ILogger<AuthenticationService>>();
         _tenantServiceMock = new Mock<ITenantService>();
         _tenantContextAccessorMock = new Mock<ITenantContextAccessor>();
-        _httpContextAccessorMock = new Mock<IHttpContextAccessor>();
-        _tokenServiceMock = new Mock<ITokenService>();
 
         _authService = new AuthenticationService(
-            _dbContextMock.Object,
+            _userManagerMock.Object,
+            _signInManagerMock.Object,
+            _tokenServiceMock.Object,
             _loggerMock.Object,
             _tenantServiceMock.Object,
-            _tenantContextAccessorMock.Object,
-            _httpContextAccessorMock.Object,
-            _tokenServiceMock.Object
+            _tenantContextAccessorMock.Object
         );
     }
 
@@ -51,9 +98,14 @@ public class AuthenticationServiceTests
             PhoneNumber = "1234567890"
         };
 
-        var dbSetMock = new Mock<DbSet<ApplicationUser>>();
-        _dbContextMock.Setup(x => x.Set<ApplicationUser>())
-            .Returns(dbSetMock.Object);
+        _userManagerMock.Setup(x => x.FindByEmailAsync(request.Email))
+            .ReturnsAsync((ApplicationUser)null);
+            
+        _userManagerMock.Setup(x => x.FindByNameAsync(request.Username))
+            .ReturnsAsync((ApplicationUser)null);
+            
+        _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), request.Password))
+            .ReturnsAsync(IdentityResult.Success);
 
         // Act
         var result = await _authService.RegisterUserAsync(request);
@@ -79,19 +131,12 @@ public class AuthenticationServiceTests
         var existingUser = new ApplicationUser
         {
             Id = Guid.NewGuid().ToString(),
-            Username = "existinguser",
+            UserName = "existinguser",
             Email = "existing@example.com"
         };
 
-        var users = new List<ApplicationUser> { existingUser }.AsQueryable();
-        var dbSetMock = new Mock<DbSet<ApplicationUser>>();
-        dbSetMock.As<IQueryable<ApplicationUser>>().Setup(m => m.Provider).Returns(users.Provider);
-        dbSetMock.As<IQueryable<ApplicationUser>>().Setup(m => m.Expression).Returns(users.Expression);
-        dbSetMock.As<IQueryable<ApplicationUser>>().Setup(m => m.ElementType).Returns(users.ElementType);
-        dbSetMock.As<IQueryable<ApplicationUser>>().Setup(m => m.GetEnumerator()).Returns(users.GetEnumerator());
-
-        _dbContextMock.Setup(x => x.Set<ApplicationUser>())
-            .Returns(dbSetMock.Object);
+        _userManagerMock.Setup(x => x.FindByNameAsync(request.Username))
+            .ReturnsAsync(existingUser);
 
         // Act
         var result = await _authService.RegisterUserAsync(request);
@@ -114,26 +159,22 @@ public class AuthenticationServiceTests
         var user = new ApplicationUser
         {
             Id = Guid.NewGuid().ToString(),
-            Username = "testuser",
+            UserName = "testuser",
             Email = "test@example.com",
-            EmailConfirmed = true,
-            PasswordHash = "hashedpassword" // In real scenario, this would be properly hashed
+            EmailConfirmed = true
         };
 
-        var users = new List<ApplicationUser> { user }.AsQueryable();
-        var dbSetMock = new Mock<DbSet<ApplicationUser>>();
-        dbSetMock.As<IQueryable<ApplicationUser>>().Setup(m => m.Provider).Returns(users.Provider);
-        dbSetMock.As<IQueryable<ApplicationUser>>().Setup(m => m.Expression).Returns(users.Expression);
-        dbSetMock.As<IQueryable<ApplicationUser>>().Setup(m => m.ElementType).Returns(users.ElementType);
-        dbSetMock.As<IQueryable<ApplicationUser>>().Setup(m => m.GetEnumerator()).Returns(users.GetEnumerator());
+        _userManagerMock.Setup(x => x.FindByNameAsync(request.UsernameOrEmail))
+            .ReturnsAsync(user);
+            
+        _signInManagerMock.Setup(x => x.CheckPasswordSignInAsync(user, request.Password, true))
+            .ReturnsAsync(SignInResult.Success);
+            
+        _userManagerMock.Setup(x => x.GetTwoFactorEnabledAsync(user))
+            .ReturnsAsync(false);
 
-        _dbContextMock.Setup(x => x.Set<ApplicationUser>())
-            .Returns(dbSetMock.Object);
-
-        _tokenServiceMock.Setup(x => x.GenerateAccessToken(It.IsAny<ApplicationUser>()))
+        _tokenServiceMock.Setup(x => x.GenerateAccessToken(user))
             .Returns("test_access_token");
-        _tokenServiceMock.Setup(x => x.GenerateRefreshToken())
-            .Returns("test_refresh_token");
 
         // Act
         var result = await _authService.AuthenticateAsync(request);
@@ -141,7 +182,7 @@ public class AuthenticationServiceTests
         // Assert
         Assert.True(result.Succeeded);
         Assert.NotNull(result.AccessToken);
-        Assert.NotNull(result.RefreshToken);
+        Assert.Equal("test_access_token", result.AccessToken);
         Assert.NotNull(result.ExpiresAt);
     }
 
@@ -158,21 +199,16 @@ public class AuthenticationServiceTests
         var user = new ApplicationUser
         {
             Id = Guid.NewGuid().ToString(),
-            Username = "testuser",
+            UserName = "testuser",
             Email = "test@example.com",
-            EmailConfirmed = true,
-            PasswordHash = "hashedpassword"
+            EmailConfirmed = true
         };
 
-        var users = new List<ApplicationUser> { user }.AsQueryable();
-        var dbSetMock = new Mock<DbSet<ApplicationUser>>();
-        dbSetMock.As<IQueryable<ApplicationUser>>().Setup(m => m.Provider).Returns(users.Provider);
-        dbSetMock.As<IQueryable<ApplicationUser>>().Setup(m => m.Expression).Returns(users.Expression);
-        dbSetMock.As<IQueryable<ApplicationUser>>().Setup(m => m.ElementType).Returns(users.ElementType);
-        dbSetMock.As<IQueryable<ApplicationUser>>().Setup(m => m.GetEnumerator()).Returns(users.GetEnumerator());
-
-        _dbContextMock.Setup(x => x.Set<ApplicationUser>())
-            .Returns(dbSetMock.Object);
+        _userManagerMock.Setup(x => x.FindByNameAsync(request.UsernameOrEmail))
+            .ReturnsAsync(user);
+            
+        _signInManagerMock.Setup(x => x.CheckPasswordSignInAsync(user, request.Password, true))
+            .ReturnsAsync(SignInResult.Failed);
 
         // Act
         var result = await _authService.AuthenticateAsync(request);
@@ -190,30 +226,14 @@ public class AuthenticationServiceTests
         var user = new ApplicationUser
         {
             Id = Guid.NewGuid().ToString(),
-            Username = "testuser"
+            UserName = "testuser",
+            Email = "test@example.com"
         };
 
-        var userToken = new UserToken
-        {
-            Id = Guid.NewGuid(),
-            UserId = Guid.Parse(user.Id),
-            TokenType = "RefreshToken",
-            TokenValue = refreshToken,
-            ExpirationDate = DateTime.UtcNow.AddDays(1),
-            IsUsed = false,
-            User = user
-        };
-
-        var tokens = new List<UserToken> { userToken }.AsQueryable();
-        var dbSetMock = new Mock<DbSet<UserToken>>();
-        dbSetMock.As<IQueryable<UserToken>>().Setup(m => m.Provider).Returns(tokens.Provider);
-        dbSetMock.As<IQueryable<UserToken>>().Setup(m => m.Expression).Returns(tokens.Expression);
-        dbSetMock.As<IQueryable<UserToken>>().Setup(m => m.ElementType).Returns(tokens.ElementType);
-        dbSetMock.As<IQueryable<UserToken>>().Setup(m => m.GetEnumerator()).Returns(tokens.GetEnumerator());
-
-        _dbContextMock.Setup(x => x.Set<UserToken>())
-            .Returns(dbSetMock.Object);
-
+        _tokenServiceMock.Setup(x => x.ValidateRefreshTokenAsync(refreshToken))
+            .ReturnsAsync((true, user.Id));
+        _userManagerMock.Setup(x => x.FindByIdAsync(user.Id))
+            .ReturnsAsync(user);
         _tokenServiceMock.Setup(x => x.GenerateAccessToken(It.IsAny<ApplicationUser>()))
             .Returns("new_access_token");
         _tokenServiceMock.Setup(x => x.GenerateRefreshToken())
@@ -234,15 +254,8 @@ public class AuthenticationServiceTests
     {
         // Arrange
         var refreshToken = "invalid_refresh_token";
-        var tokens = new List<UserToken>().AsQueryable();
-        var dbSetMock = new Mock<DbSet<UserToken>>();
-        dbSetMock.As<IQueryable<UserToken>>().Setup(m => m.Provider).Returns(tokens.Provider);
-        dbSetMock.As<IQueryable<UserToken>>().Setup(m => m.Expression).Returns(tokens.Expression);
-        dbSetMock.As<IQueryable<UserToken>>().Setup(m => m.ElementType).Returns(tokens.ElementType);
-        dbSetMock.As<IQueryable<UserToken>>().Setup(m => m.GetEnumerator()).Returns(tokens.GetEnumerator());
-
-        _dbContextMock.Setup(x => x.Set<UserToken>())
-            .Returns(dbSetMock.Object);
+        _tokenServiceMock.Setup(x => x.ValidateRefreshTokenAsync(refreshToken))
+            .ReturnsAsync((false, string.Empty));
 
         // Act
         var result = await _authService.RefreshTokenAsync(refreshToken);

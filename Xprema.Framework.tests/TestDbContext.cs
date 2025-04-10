@@ -1,10 +1,13 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.AspNetCore.Identity;
+using Xprema.Framework.Entities.Common;
 using Xprema.Framework.Entities.HistoryFeature;
 using Xprema.Framework.Entities.Identity;
 using Xprema.Framework.Entities.MultiTenancy;
 using Xprema.Framework.Entities.Permission;
+using Xprema.Framework.Identity;
 
-namespace Xprema.Framework.Tests;
+namespace Xprema.Framework.tests;
 
 public class TestDbContext : DbContext
 {
@@ -16,7 +19,7 @@ public class TestDbContext : DbContext
     public DbSet<Role> Roles { get; set; } = null!;
     public DbSet<Permission> Permissions { get; set; } = null!;
     public DbSet<RolePermission> RolePermissions { get; set; } = null!;
-    public DbSet<UserRole> UserRoles { get; set; } = null!;
+    public DbSet<Xprema.Framework.Entities.Permission.UserRole> UserRoles { get; set; } = null!;
     
     // Tenant entities
     public DbSet<Tenant> Tenants { get; set; } = null!;
@@ -29,6 +32,8 @@ public class TestDbContext : DbContext
     
     // Audit entities
     public DbSet<AuditLog> AuditLogs { get; set; } = null!;
+    public DbSet<EntityHistoryRecord> EntityHistoryRecords { get; set; } = null!;
+    public DbSet<EntityPropertyChangeRecord> EntityPropertyChangeRecords { get; set; } = null!;
     
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -37,64 +42,45 @@ public class TestDbContext : DbContext
         // Configure entity relationships for permission entities
         modelBuilder.Entity<RolePermission>()
             .HasOne(rp => rp.Role)
-            .WithMany(r => r.RolePermissions)
+            .WithMany()
             .HasForeignKey(rp => rp.RoleId);
             
         modelBuilder.Entity<RolePermission>()
             .HasOne(rp => rp.Permission)
-            .WithMany(p => p.RolePermissions)
+            .WithMany()
             .HasForeignKey(rp => rp.PermissionId);
             
-        modelBuilder.Entity<UserRole>()
+        modelBuilder.Entity<Xprema.Framework.Entities.Permission.UserRole>()
             .HasOne(ur => ur.Role)
-            .WithMany(r => r.UserRoles)
+            .WithMany()
             .HasForeignKey(ur => ur.RoleId);
             
         // Configure entity relationships for tenant entities
         modelBuilder.Entity<TenantUser>()
             .HasOne(tu => tu.Tenant)
-            .WithMany(t => t.TenantUsers)
+            .WithMany()
             .HasForeignKey(tu => tu.TenantId);
             
-        // Configure dictionary storage
-        modelBuilder.Entity<Tenant>()
-            .Property(t => t.Settings)
-            .HasConversion(
-                v => System.Text.Json.JsonSerializer.Serialize(v, (System.Text.Json.JsonSerializerOptions)null!),
-                v => System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(v, (System.Text.Json.JsonSerializerOptions)null) ?? new Dictionary<string, string>());
-                
-        // Configure Identity entities
-        modelBuilder.Entity<ApplicationUser>()
-            .HasIndex(u => u.Username)
-            .IsUnique();
-            
-        modelBuilder.Entity<ApplicationUser>()
-            .HasIndex(u => u.Email)
-            .IsUnique();
-            
+        // Configure entity relationships for identity entities
         modelBuilder.Entity<UserToken>()
-            .HasOne(t => t.User)
-            .WithMany(u => u.UserTokens)
-            .HasForeignKey(t => t.UserId);
-            
-        modelBuilder.Entity<UserToken>()
-            .HasOne(t => t.Tenant)
+            .HasOne(ut => ut.User)
             .WithMany()
-            .HasForeignKey(t => t.TenantId);
+            .HasForeignKey(ut => ut.UserId);
             
         modelBuilder.Entity<UserRoleIdentity>()
-            .HasOne(ur => ur.User)
+            .HasOne(uri => uri.User)
             .WithMany()
-            .HasForeignKey(ur => ur.UserId);
+            .HasForeignKey(uri => uri.UserId);
             
         modelBuilder.Entity<UserRoleIdentity>()
-            .HasOne(ur => ur.Role)
+            .HasOne(uri => uri.Role)
             .WithMany()
-            .HasForeignKey(ur => ur.RoleId);
+            .HasForeignKey(uri => uri.RoleId);
             
-        modelBuilder.Entity<UserRoleIdentity>()
-            .HasOne(ur => ur.Tenant)
+        // Configure entity relationships for audit entities
+        modelBuilder.Entity<EntityPropertyChangeRecord>()
+            .HasOne(epcr => epcr.EntityHistoryRecord)
             .WithMany()
-            .HasForeignKey(ur => ur.TenantId);
+            .HasForeignKey(epcr => epcr.EntityHistoryRecordId);
     }
 } 

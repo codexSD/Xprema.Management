@@ -3,8 +3,9 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Moq;
 using Xprema.Framework.Core;
+using Xprema.Framework.Core.Modules;
 
-namespace Xprema.Framework.tests.Core;
+namespace Xprema.Framework.Tests.Core;
 
 public class ModuleBaseTests
 {

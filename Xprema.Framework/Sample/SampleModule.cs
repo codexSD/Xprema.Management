@@ -27,11 +27,14 @@ public class SampleModule : IModule
     public void RegisterServices(IServiceCollection services, IConfiguration configuration)
     {
         // Register sample services here
+        services.AddScoped<ISampleService, SampleService>();
+        services.AddScoped<ILoggingService, LoggingService>();
     }
 
     public void Configure(IApplicationBuilder app)
     {
         // Configure sample middleware here
+        app.UseMiddleware<SampleMiddleware>();
     }
 }
 

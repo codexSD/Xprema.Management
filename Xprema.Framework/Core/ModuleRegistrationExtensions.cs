@@ -1,6 +1,7 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Builder;
+using System;
 
 namespace Xprema.Framework.Core;
 
@@ -18,9 +19,22 @@ public static class ModuleRegistrationExtensions
     /// <returns>The service collection for chaining</returns>
     public static IServiceCollection AddFrameworkModule<TModule>(
         this IServiceCollection services,
-        IConfiguration configuration) where TModule : class, IModule, new()
+        IConfiguration configuration) where TModule : class, IModule
     {
-        var module = new TModule();
+        // Try to create instance with configuration parameter first
+        TModule module;
+        var constructor = typeof(TModule).GetConstructor(new[] { typeof(IConfiguration) });
+        
+        if (constructor != null)
+        {
+            module = (TModule)constructor.Invoke(new object[] { configuration });
+        }
+        else
+        {
+            // Fall back to parameterless constructor
+            module = Activator.CreateInstance<TModule>();
+        }
+        
         module.RegisterServices(services, configuration);
         services.AddSingleton(module);
         return services;

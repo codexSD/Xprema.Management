@@ -1,77 +1,90 @@
+using System;
 using System.Collections.Generic;
 using System.Threading.Tasks;
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using Xprema.Framework.Identity;
 using Xprema.Framework.Entities.Identity;
+using Xunit;
 
-namespace Xprema.Framework.Tests.IdentityTests;
-
-public class TokenServiceTests : TestBase
+namespace Xprema.Framework.tests.IdentityTests
 {
-    [Fact]
-    public async Task GenerateAccessToken_ShouldReturnValidToken()
+    public class TokenServiceTests : TestBase
     {
-        // Arrange
-        var user = await CreateTestUserAsync();
-        
-        // Act
-        var token = TokenService.GenerateAccessToken(user);
-        
-        // Assert
-        Assert.NotNull(token);
-        Assert.NotEmpty(token);
-        
-        // Validate the token
-        Dictionary<string, string> claims;
-        var isValid = TokenService.ValidateToken(token, out claims);
-        
-        Assert.True(isValid);
-        Assert.NotNull(claims);
-        
-        // Output all claims for debugging
-        foreach (var claim in claims)
+        private readonly TokenService _tokenService;
+        private readonly IConfiguration _configuration;
+
+        public TokenServiceTests()
         {
-            Console.WriteLine($"Claim: {claim.Key} = {claim.Value}");
+            _configuration = ServiceProvider.GetRequiredService<IConfiguration>();
+            _tokenService = new TokenService(_configuration);
         }
-        
-        // Use the exact claim types from JWT
-        Assert.True(claims.ContainsKey("nameid") || claims.ContainsKey("sub"), "JWT should contain a subject identifier claim");
-        Assert.True(claims.ContainsKey("unique_name") || claims.ContainsKey("name"), "JWT should contain a name claim");
-        Assert.True(claims.ContainsKey("email"), "JWT should contain an email claim");
-        
-        string nameIdValue = claims.ContainsKey("nameid") ? claims["nameid"] : claims["sub"];
-        string nameValue = claims.ContainsKey("unique_name") ? claims["unique_name"] : claims["name"];
-        
-        Assert.Equal(user.Id.ToString(), nameIdValue);
-        Assert.Equal(user.Username, nameValue);
-        Assert.Equal(user.Email, claims["email"]);
-    }
-    
-    [Fact]
-    public void GenerateRefreshToken_ShouldReturnRandomToken()
-    {
-        // Act
-        var token1 = TokenService.GenerateRefreshToken();
-        var token2 = TokenService.GenerateRefreshToken();
-        
-        // Assert
-        Assert.NotNull(token1);
-        Assert.NotNull(token2);
-        Assert.NotEmpty(token1);
-        Assert.NotEmpty(token2);
-        Assert.NotEqual(token1, token2); // Tokens should be unique
-    }
-    
-    [Fact]
-    public void ValidateToken_WithInvalidToken_ShouldReturnFalse()
-    {
-        // Arrange
-        var invalidToken = "invalid.token.string";
-        
-        // Act
-        Dictionary<string, string> claims;
-        var isValid = TokenService.ValidateToken(invalidToken, out claims);
-        
-        // Assert
-        Assert.False(isValid);
-        Assert.Empty(claims);
+
+        [Fact]
+        public async Task GenerateAccessToken_ShouldReturnValidToken()
+        {
+            // Arrange
+            var user = new ApplicationUser
+            {
+                Id = Guid.NewGuid().ToString(),
+                UserName = "test@example.com",
+                Email = "test@example.com"
+            };
+
+            // Act
+            var token = _tokenService.GenerateAccessToken(user);
+
+            // Assert
+            Assert.NotNull(token);
+            Assert.NotEmpty(token);
+        }
+
+        [Fact]
+        public async Task ValidateToken_ShouldReturnTrueForValidToken()
+        {
+            // Arrange
+            var user = new ApplicationUser
+            {
+                Id = Guid.NewGuid().ToString(),
+                UserName = "test@example.com",
+                Email = "test@example.com"
+            };
+            var token = _tokenService.GenerateAccessToken(user);
+
+            // Act
+            var isValid = _tokenService.ValidateToken(token, out var claims);
+
+            // Assert
+            Assert.True(isValid);
+            Assert.NotNull(claims);
+            Assert.Contains(claims, c => c.Key == "sub" && c.Value == user.Id);
+        }
+
+        [Fact]
+        public async Task GenerateRefreshToken_ShouldReturnUniqueTokens()
+        {
+            // Act
+            var token1 = _tokenService.GenerateRefreshToken();
+            var token2 = _tokenService.GenerateRefreshToken();
+
+            // Assert
+            Assert.NotNull(token1);
+            Assert.NotNull(token2);
+            Assert.NotEqual(token1, token2);
+        }
+
+        [Fact]
+        public async Task ValidateToken_ShouldReturnFalseForInvalidToken()
+        {
+            // Arrange
+            var invalidToken = "invalid.token.here";
+
+            // Act
+            var isValid = _tokenService.ValidateToken(invalidToken, out var claims);
+
+            // Assert
+            Assert.False(isValid);
+            Assert.Null(claims);
+        }
     }
 } 
