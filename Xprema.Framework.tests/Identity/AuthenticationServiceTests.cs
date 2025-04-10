@@ -14,6 +14,8 @@ using Xprema.Framework.Entities.Identity;
 using Xprema.Framework.Entities.MultiTenancy;
 using Xunit;
 using Microsoft.AspNetCore.Authentication;
+using IAuthenticationService = Xprema.Framework.Entities.Identity.IAuthenticationService;
+using AuthenticationService = Xprema.Framework.Identity.AuthenticationService;
 
 namespace Xprema.Framework.Tests.Identity;
 
@@ -99,10 +101,10 @@ public class AuthenticationServiceTests
         };
 
         _userManagerMock.Setup(x => x.FindByEmailAsync(request.Email))
-            .ReturnsAsync((ApplicationUser)null);
+            .ReturnsAsync((ApplicationUser?)null);
             
         _userManagerMock.Setup(x => x.FindByNameAsync(request.Username))
-            .ReturnsAsync((ApplicationUser)null);
+            .ReturnsAsync((ApplicationUser?)null);
             
         _userManagerMock.Setup(x => x.CreateAsync(It.IsAny<ApplicationUser>(), request.Password))
             .ReturnsAsync(IdentityResult.Success);
@@ -175,6 +177,8 @@ public class AuthenticationServiceTests
 
         _tokenServiceMock.Setup(x => x.GenerateAccessToken(user))
             .Returns("test_access_token");
+        _tokenServiceMock.Setup(x => x.GenerateRefreshToken())
+            .Returns("test_refresh_token");
 
         // Act
         var result = await _authService.AuthenticateAsync(request);
