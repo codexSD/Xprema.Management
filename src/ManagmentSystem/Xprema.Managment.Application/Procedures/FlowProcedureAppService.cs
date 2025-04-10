@@ -19,11 +19,16 @@ public class FlowProcedureAppService : IFlowProcedureAppService
 {
     private readonly ManagmentDbContext _dbContext;
     private readonly IMapper _mapper;
+    private readonly string _currentUserId;
 
-    public FlowProcedureAppService(ManagmentDbContext dbContext, IMapper mapper)
+    public FlowProcedureAppService(
+        ManagmentDbContext dbContext, 
+        IMapper mapper,
+        string currentUserId = "system") // Default value for backward compatibility
     {
         _dbContext = dbContext;
         _mapper = mapper;
+        _currentUserId = currentUserId;
     }
 
     /// <inheritdoc/>
@@ -57,6 +62,8 @@ public class FlowProcedureAppService : IFlowProcedureAppService
         // Set audit fields
         procedure.Id = Guid.NewGuid();
         procedure.CreationTime = DateTime.Now;
+        procedure.CreatedBy = _currentUserId;
+        procedure.ConcurrencyStamp = Guid.NewGuid().ToString();
         
         await _dbContext.FlowProcedures.AddAsync(procedure);
         

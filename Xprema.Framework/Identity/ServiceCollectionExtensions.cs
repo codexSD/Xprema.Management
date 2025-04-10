@@ -3,8 +3,11 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
 using System.Text;
+using Microsoft.AspNetCore.Identity;
+using Xprema.Framework.Identity;
+using Xprema.Framework.Entities.Identity;
 
-namespace Xprema.Framework.Entities.Identity;
+namespace Xprema.Framework.Identity;
 
 public static class ServiceCollectionExtensions
 {
@@ -95,5 +98,27 @@ public static class ServiceCollectionExtensions
             .HasOne(ur => ur.Tenant)
             .WithMany()
             .HasForeignKey(ur => ur.TenantId);
+    }
+
+    public static IServiceCollection AddIdentityServices(this IServiceCollection services)
+    {
+        services.AddScoped<IAuthenticationService, AuthenticationService>();
+        services.AddScoped<ITokenService, TokenService>();
+        
+        return services;
+    }
+    
+    public static IServiceCollection AddIdentity<TUser>(this IServiceCollection services, Action<IdentityOptions>? setupAction = null) where TUser : class
+    {
+        services.AddIdentityCore<TUser>(options => { })
+            .AddEntityFrameworkStores<ApplicationDbContext>()
+            .AddDefaultTokenProviders();
+            
+        if (setupAction != null)
+        {
+            services.Configure(setupAction);
+        }
+        
+        return services;
     }
 } 

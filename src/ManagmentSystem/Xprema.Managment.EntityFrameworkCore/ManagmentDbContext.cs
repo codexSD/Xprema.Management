@@ -13,18 +13,18 @@ public class ManagmentDbContext : DbContext
     }
 
     // Procedure Area
-    public DbSet<FlowProcedure> FlowProcedures { get; set; }
-    public DbSet<FlowProcedureStep> FlowProcedureSteps { get; set; }
-    public DbSet<FlowProcedureCompose> FlowProcedureComposes { get; set; }
+    public virtual DbSet<FlowProcedure> FlowProcedures { get; set; }
+    public virtual DbSet<FlowProcedureStep> FlowProcedureSteps { get; set; }
+    public virtual DbSet<FlowProcedureCompose> FlowProcedureComposes { get; set; }
     
     // Task Area
-    public DbSet<FlowTask> FlowTasks { get; set; }
-    public DbSet<FlowTaskStep> FlowTaskSteps { get; set; }
-    public DbSet<TaskTimeline> TaskTimelines { get; set; }
-    public DbSet<TaskParticipant> TaskParticipants { get; set; }
+    public virtual DbSet<FlowTask> FlowTasks { get; set; }
+    public virtual DbSet<FlowTaskStep> FlowTaskSteps { get; set; }
+    public virtual DbSet<TaskTimeline> TaskTimelines { get; set; }
+    public virtual DbSet<TaskParticipant> TaskParticipants { get; set; }
     
     // Action Area
-    public DbSet<FlowAction> FlowActions { get; set; }
+    public virtual DbSet<FlowAction> FlowActions { get; set; }
     
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -39,7 +39,7 @@ public class ManagmentDbContext : DbContext
         ApplyGlobalFilters(modelBuilder);
     }
     
-    private void ConfigureProcedureArea(ModelBuilder modelBuilder)
+    protected virtual void ConfigureProcedureArea(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<FlowProcedure>(b =>
         {
@@ -91,7 +91,7 @@ public class ManagmentDbContext : DbContext
         });
     }
     
-    private void ConfigureTaskArea(ModelBuilder modelBuilder)
+    protected virtual void ConfigureTaskArea(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<FlowTask>(b =>
         {
@@ -174,7 +174,7 @@ public class ManagmentDbContext : DbContext
         });
     }
     
-    private void ConfigureActionArea(ModelBuilder modelBuilder)
+    protected virtual void ConfigureActionArea(ModelBuilder modelBuilder)
     {
         modelBuilder.Entity<FlowAction>(b =>
         {
@@ -183,7 +183,7 @@ public class ManagmentDbContext : DbContext
         });
     }
     
-    private void ApplyGlobalFilters(ModelBuilder modelBuilder)
+    protected virtual void ApplyGlobalFilters(ModelBuilder modelBuilder)
     {
         // Apply soft-delete filter to all relevant entities
         modelBuilder.Entity<FlowProcedure>().HasQueryFilter(e => !e.IsDeleted);

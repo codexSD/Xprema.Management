@@ -175,3 +175,4 @@
 /Users/samerabdallah/RiderProjects/Xprema.Management/test/Xprema.Managment.UnitTests/obj/Debug/net9.0/Xprema.Managment.UnitTests.pdb
 /Users/samerabdallah/RiderProjects/Xprema.Management/test/Xprema.Managment.UnitTests/obj/Debug/net9.0/Xprema.Managment.UnitTests.genruntimeconfig.cache
 /Users/samerabdallah/RiderProjects/Xprema.Management/test/Xprema.Managment.UnitTests/obj/Debug/net9.0/ref/Xprema.Managment.UnitTests.dll
+/Users/samerabdallah/RiderProjects/Xprema.Management/test/Xprema.Managment.UnitTests/bin/Debug/net9.0/Microsoft.AspNetCore.Identity.EntityFrameworkCore.dll

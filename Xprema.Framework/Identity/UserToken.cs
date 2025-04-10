@@ -1,6 +1,7 @@
 using System.ComponentModel.DataAnnotations;
 using Xprema.Framework.Entities.Common;
 using Xprema.Framework.Entities.MultiTenancy;
+using Xprema.Framework.Identity;
 
 namespace Xprema.Framework.Entities.Identity;
 
